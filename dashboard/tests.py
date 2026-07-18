@@ -4,12 +4,17 @@ from rest_framework.test import APITestCase
 from decimal import Decimal
 from django.utils import timezone
 from datetime import timedelta
+from django.contrib.auth.models import User
 
 from .models import CustomerType, Customer, Sale, Expense
 
 class DashboardAPITests(APITestCase):
 
     def setUp(self):
+        # Create superuser manager
+        self.manager_user = User.objects.create_superuser(username='admin', email='admin@admin.com', password='adminpassword')
+        self.client.force_authenticate(user=self.manager_user)
+
         # Create Customer Types
         self.shops_type = CustomerType.objects.create(name='Shops')
         self.dist_type = CustomerType.objects.create(name='Distributors')
@@ -128,3 +133,75 @@ class DashboardAPITests(APITestCase):
         self.assertIn('customer_lookup', response.data)
         self.assertIn('expense_categories', response.data)
         self.assertIn('unit_types', response.data)
+
+    def test_customer_user_auto_creation_and_deletion(self):
+        # Test creation of user account when customer is added with email
+        new_customer = Customer.objects.create(
+            name='Test Shop',
+            custom_id='FT-TEST1',
+            email='testshop@email.com',
+            customer_type=self.shops_type
+        )
+        self.assertIsNotNone(new_customer.user)
+        self.assertEqual(new_customer.user.username, 'testshop@email.com')
+        # Verify password check (password should be the shop name)
+        self.assertTrue(new_customer.user.check_password('Test Shop'))
+        
+        # Test edit - email removal
+        new_customer.email = ''
+        new_customer.save()
+        
+        # User account should be deleted
+        self.assertFalse(User.objects.filter(username='testshop@email.com').exists())
+
+    def test_customer_confidentiality_restrictions(self):
+        # Create a customer with email (triggers user creation)
+        customer_shop = Customer.objects.create(
+            name='Polar Express',
+            custom_id='FT-POLAR',
+            email='polar@email.com',
+            customer_type=self.shops_type
+        )
+        customer_user = customer_shop.user
+        
+        # Authenticate client as this customer
+        self.client.force_authenticate(user=customer_user)
+        
+        # 1. Customer should not see expenses (403 Forbidden)
+        url_expenses = reverse('expense-list')
+        response = self.client.get(url_expenses)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        
+        # 2. Customer should only see their own customer profile
+        url_customers = reverse('customer-list')
+        response = self.client.get(url_customers)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Should only see 1 customer (Polar Express)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['id'], customer_shop.id)
+        
+        # 3. Customer should only see their own sales logs
+        # Create a sale for this customer
+        Sale.objects.create(
+            date=timezone.localdate(),
+            customer=customer_shop,
+            quantity=50,
+            unit_type='Bags',
+            unit_price=Decimal('20.00'),
+            payment_status='Pending'
+        )
+        
+        url_sales = reverse('sale-list')
+        response = self.client.get(url_sales)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Should only return the 1 sale we just created, not the ones from setUp
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['customer'], customer_shop.id)
+        
+        # 4. Customer should get custom dashboard overview
+        url_overview = reverse('dashboard-overview')
+        response = self.client.get(url_overview)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['metrics']['total_outstanding_receivables'], 1000.00) # 50 * 20
+        self.assertEqual(response.data['metrics']['total_revenue_current_month'], 0.00) # Hidden
+        self.assertEqual(response.data['metrics']['total_expenses_current_month'], 0.00) # Hidden

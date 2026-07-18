@@ -16,10 +16,35 @@ from .serializers import (
     ExpenseSerializer
 )
 
+from rest_framework import permissions
+
+class IsManagerUser(permissions.BasePermission):
+    """
+    Allows access only to manager (staff) users.
+    """
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and (request.user.is_staff or request.user.is_superuser))
+
+
+class IsManagerOrReadOnlyCustomer(permissions.BasePermission):
+    """
+    Allows full access to managers, and read-only access to customer users for their own data.
+    """
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        if request.user.is_staff or request.user.is_superuser:
+            return True
+        if request.method in permissions.SAFE_METHODS and hasattr(request.user, 'customer'):
+            return True
+        return False
+
+
 class CustomerTypeViewSet(viewsets.ModelViewSet):
     """
     API endpoint for viewing and editing customer types.
     """
+    permission_classes = [IsManagerUser]
     queryset = CustomerType.objects.all()
     serializer_class = CustomerTypeSerializer
     filter_backends = [filters.SearchFilter]
@@ -31,12 +56,22 @@ class CustomerViewSet(viewsets.ModelViewSet):
     API endpoint for viewing, creating, and modifying customers.
     Supports balance-based filtering and custom search options.
     """
+    permission_classes = [IsManagerOrReadOnlyCustomer]
     serializer_class = CustomerSerializer
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['name', 'phone', 'custom_id']
     ordering_fields = ['name', 'custom_id', 'created_at']
 
     def get_queryset(self):
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return Customer.objects.none()
+            
+        if not (user.is_staff or user.is_superuser):
+            if hasattr(user, 'customer'):
+                return Customer.objects.filter(id=user.customer.id)
+            return Customer.objects.none()
+
         queryset = Customer.objects.all()
         
         # Filter by customer type
@@ -45,7 +80,6 @@ class CustomerViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(customer_type_id=customer_type)
 
         # Filter by status (balance_status)
-        # options: 'active' (has unpaid dues), 'cleared' (no dues), 'overdue' (has overdue status sales)
         balance_status = self.request.query_params.get('balance_status')
         if balance_status:
             if balance_status == 'active':
@@ -63,12 +97,22 @@ class SaleViewSet(viewsets.ModelViewSet):
     API endpoint for logging and viewing transactions of ice bags or blocks.
     Supports detailed search, customer filters, payment status, and date range filters.
     """
+    permission_classes = [IsManagerOrReadOnlyCustomer]
     serializer_class = SaleSerializer
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['customer__name', 'customer__custom_id', 'id']
     ordering_fields = ['date', 'quantity', 'unit_price', 'created_at']
 
     def get_queryset(self):
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return Sale.objects.none()
+            
+        if not (user.is_staff or user.is_superuser):
+            if hasattr(user, 'customer'):
+                return Sale.objects.filter(customer=user.customer)
+            return Sale.objects.none()
+
         queryset = Sale.objects.all()
         
         customer = self.request.query_params.get('customer')
@@ -102,12 +146,17 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     """
     API endpoint for logging and managing operational expenditures.
     """
+    permission_classes = [IsManagerUser]
     serializer_class = ExpenseSerializer
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['category', 'description']
     ordering_fields = ['date', 'amount', 'created_at']
 
     def get_queryset(self):
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return Expense.objects.none()
+
         queryset = Expense.objects.all()
         
         category = self.request.query_params.get('category')
@@ -130,8 +179,59 @@ class DashboardOverviewView(APIView):
     specifically formatted for the Frozen True Financial Dashboard UI.
     """
     def get(self, request, *args, **kwargs):
+        # Check permissions
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response({'detail': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+
         today = timezone.localdate()
+        is_manager = user.is_staff or user.is_superuser
         
+        if not is_manager:
+            if not hasattr(user, 'customer'):
+                return Response({'detail': 'Customer profile not found'}, status=status.HTTP_403_FORBIDDEN)
+            
+            customer = user.customer
+            
+            # Customer metrics:
+            total_outstanding = customer.total_outstanding_balance
+            
+            # Trend (Last 30 Days) for this customer
+            dates_list = [today - timedelta(days=i) for i in range(29, -1, -1)]
+            sales_30_days = Sale.objects.filter(customer=customer, date__gte=dates_list[0], date__lte=today)
+            daily_sales = sales_30_days.annotate(
+                total=F('quantity') * F('unit_price')
+            ).values('date').annotate(
+                day_total=Sum('total')
+            )
+            daily_sales_map = {item['date']: item['day_total'] for item in daily_sales}
+            trend_data = []
+            for d in dates_list:
+                trend_data.append({
+                    'date': d.strftime('%Y-%m-%d'),
+                    'label': d.strftime('%b %d'),
+                    'amount': float(daily_sales_map.get(d) or Decimal('0.00'))
+                })
+                
+            # Recent Activity: Latest 5 sales for this customer
+            recent_sales = Sale.objects.filter(customer=customer).order_by('-date', '-created_at')[:5]
+            recent_sales_serialized = SaleSerializer(recent_sales, many=True).data
+            
+            payload = {
+                'metrics': {
+                    'total_revenue_current_month': 0.00,
+                    'total_revenue_previous_month': 0.00,
+                    'revenue_growth_percentage': 0.0,
+                    'total_expenses_current_month': 0.00,
+                    'total_expenses_previous_month': 0.00,
+                    'total_outstanding_receivables': float(total_outstanding),
+                    'active_due_customers_count': 0
+                },
+                'trend_30_days': trend_data,
+                'recent_activity': recent_sales_serialized
+            }
+            return Response(payload, status=status.HTTP_200_OK)
+
         # 1. Calculate Current Month Boundaries
         first_day_curr = date(today.year, today.month, 1)
         _, last_day_curr_num = monthrange(today.year, today.month)
@@ -273,3 +373,61 @@ class QuickAddContextView(APIView):
             'expense_categories': expense_categories,
             'unit_types': unit_types
         }, status=status.HTTP_200_OK)
+
+
+class LoginView(APIView):
+    """
+    API endpoint for user login.
+    """
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        username = request.data.get('username')
+        password = request.data.get('password')
+        
+        from django.contrib.auth import authenticate, login
+        user = authenticate(request, username=username, password=password)
+        if user is not None:
+            login(request, user)
+            role = 'manager' if (user.is_staff or user.is_superuser) else 'customer'
+            customer_id = user.customer.id if hasattr(user, 'customer') else None
+            return Response({
+                'username': user.username,
+                'email': user.email,
+                'role': role,
+                'customer_id': customer_id
+            }, status=status.HTTP_200_OK)
+        return Response({'detail': 'Invalid credentials'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class LogoutView(APIView):
+    """
+    API endpoint for user logout.
+    """
+    def post(self, request):
+        from django.contrib.auth import logout
+        logout(request)
+        return Response({'detail': 'Successfully logged out'}, status=status.HTTP_200_OK)
+
+
+class CurrentUserView(APIView):
+    """
+    API endpoint to retrieve the current logged-in user.
+    """
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        if request.user.is_authenticated:
+            user = request.user
+            role = 'manager' if (user.is_staff or user.is_superuser) else 'customer'
+            customer_id = user.customer.id if hasattr(user, 'customer') else None
+            return Response({
+                'username': user.username,
+                'email': user.email,
+                'role': role,
+                'customer_id': customer_id
+            }, status=status.HTTP_200_OK)
+        return Response({'detail': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+

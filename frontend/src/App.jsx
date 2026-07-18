@@ -391,6 +391,7 @@ function App() {
   const [rememberMe, setRememberMe] = useState(false)
   const [authLoading, setAuthLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [userProfile, setUserProfile] = useState(null)
 
   // Quick Add Modal state
   const [quickAddOpen, setQuickAddOpen] = useState(false)
@@ -544,12 +545,33 @@ function App() {
         setSplashProgress(prev => {
           if (prev >= 100) {
             clearInterval(interval)
-            const savedSession = localStorage.getItem('ft_session')
-            if (savedSession) {
-              setView('dashboard')
-            } else {
-              setView('login')
+            const checkSession = async () => {
+              try {
+                const response = await fetch('/api/current-user/')
+                if (response.ok) {
+                  const data = await response.json()
+                  setUserProfile(data)
+                  setView('dashboard')
+                } else {
+                  localStorage.removeItem('ft_session')
+                  setView('login')
+                }
+              } catch (e) {
+                // offline fallback
+                const savedSession = localStorage.getItem('ft_session')
+                if (savedSession) {
+                  try {
+                    setUserProfile(JSON.parse(savedSession))
+                    setView('dashboard')
+                  } catch (err) {
+                    setView('login')
+                  }
+                } else {
+                  setView('login')
+                }
+              }
             }
+            checkSession()
             return 100
           }
           return prev + Math.floor(Math.random() * 8) + 4
@@ -632,25 +654,47 @@ function App() {
   }
 
   // Handle Login submission
-  const handleLoginSubmit = (e) => {
+  const handleLoginSubmit = async (e) => {
     e.preventDefault()
+    if (!username.trim() || !password.trim()) {
+      alert('Please enter both username and password.')
+      return
+    }
     setAuthLoading(true)
-    setTimeout(() => {
+    try {
+      const response = await fetch('/api/login/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password: password.trim() })
+      })
       setAuthLoading(false)
-      if (username.trim() && password.trim()) {
+      if (response.ok) {
+        const data = await response.json()
+        setUserProfile(data)
         if (rememberMe) {
-          localStorage.setItem('ft_session', username)
+          localStorage.setItem('ft_session', JSON.stringify(data))
         }
         setView('dashboard')
       } else {
-        alert('Please enter both username and password.')
+        const err = await response.json()
+        alert(err.detail || 'Invalid username or password.')
       }
-    }, 1200)
+    } catch (err) {
+      setAuthLoading(false)
+      console.error('Login error:', err)
+      alert('Network error trying to connect to server.')
+    }
   }
 
   // Handle Log Out
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/logout/', { method: 'POST' })
+    } catch (e) {
+      console.warn('Logout request failed:', e)
+    }
     localStorage.removeItem('ft_session')
+    setUserProfile(null)
     setUsername('')
     setPassword('')
     setView('login')
@@ -892,38 +936,91 @@ function App() {
     setToastMessage(`Expense of ${formatCurrency(payload.amount)} recorded successfully!`)
   }
 
+  // Edit Customer Modal state
+  const [editCustomerModalOpen, setEditCustomerModalOpen] = useState(false)
+  const [editCustName, setEditCustName] = useState('')
+  const [editCustPhone, setEditCustPhone] = useState('')
+  const [editCustEmail, setEditCustEmail] = useState('')
+  const [editCustCustomID, setEditCustCustomID] = useState('')
+
   // Handle Add Customer submission
-  const handleAddCustomer = () => {
+  const handleAddCustomer = async () => {
     if (!custName) {
       alert('Please enter a shop name.')
       return
     }
 
-    const newCust = {
-      id: Date.now(),
+    const payload = {
       name: custName,
       custom_id: custID || `FT-${Math.floor(1000 + Math.random() * 9000)}`,
-      location: custLocation,
       phone: custPhone || '+91 94460 00000',
-      email: custEmail || '',
-      total_outstanding_balance: parseFloat(custBalance) || 0.00,
-      cycle: parseFloat(custBalance) > 0 ? 'Weekly Cycle' : 'Immediate',
-      status: parseFloat(custBalance) > 0 ? 'overdue' : 'cleared',
-      last_activity: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      last_activity_desc: parseFloat(custBalance) > 0 ? 'Added with initial balance' : 'Account created',
-      icon: 'store'
+      email: custEmail || null,
+      customer_type: 10 // Default to 'Shops' (ID 10)
     }
 
-    setCustomers([...customers, newCust])
-    setCustomerModalOpen(false)
+    try {
+      const response = await fetch('/api/customers/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      if (response.ok) {
+        setToastMessage(`Customer "${custName}" added successfully!`)
+        fetchCustomers()
+        setCustomerModalOpen(false)
+        
+        // Reset form fields
+        setCustName('')
+        setCustID('')
+        setCustLocation('Kozhikode')
+        setCustPhone('')
+        setCustEmail('')
+        setCustBalance('')
+      } else {
+        const err = await response.json()
+        alert(err.detail || JSON.stringify(err) || 'Failed to create customer.')
+      }
+    } catch (e) {
+      console.error('Add customer error:', e)
+      alert('Network error adding customer.')
+    }
+  }
 
-    // Reset form fields
-    setCustName('')
-    setCustID('')
-    setCustLocation('Kozhikode')
-    setCustPhone('')
-    setCustEmail('')
-    setCustBalance('')
+  // Handle Edit Customer submission
+  const handleEditCustomer = async () => {
+    if (!editCustName) {
+      alert('Please enter a shop name.')
+      return
+    }
+
+    const payload = {
+      name: editCustName,
+      phone: editCustPhone,
+      email: editCustEmail || null,
+      custom_id: editCustCustomID
+    }
+
+    try {
+      const response = await fetch(`/api/customers/${selectedCustomerId}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      if (response.ok) {
+        setToastMessage(`Customer "${editCustName}" updated successfully!`)
+        fetchCustomers()
+        setEditCustomerModalOpen(false)
+        // Refresh selected customer info
+        const updated = await response.json()
+        setSelectedCustomerId(updated.id)
+      } else {
+        const err = await response.json()
+        alert(err.detail || JSON.stringify(err) || 'Failed to update customer.')
+      }
+    } catch (e) {
+      console.error('Edit customer error:', e)
+      alert('Network error updating customer.')
+    }
   }
 
   // Formats currency string
@@ -1288,16 +1385,20 @@ function App() {
           </button>
           <button className={`sidebar-item ${activeTab === 'sales' ? 'active' : ''}`} onClick={() => { setActiveTab('sales'); setSelectedCustomerId(null); }}>
             <span className="material-symbols-outlined">receipt_long</span>
-            <span>Sales Logs</span>
+            <span>{userProfile?.role === 'customer' ? 'My Purchases' : 'Sales Logs'}</span>
           </button>
-          <button className={`sidebar-item ${activeTab === 'expenses' ? 'active' : ''}`} onClick={() => { setActiveTab('expenses'); setSelectedCustomerId(null); }}>
-            <span className="material-symbols-outlined">payments</span>
-            <span>Expense Tracker</span>
-          </button>
-          <button className={`sidebar-item ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}>
-            <span className="material-symbols-outlined">group</span>
-            <span>Customers</span>
-          </button>
+          {userProfile?.role === 'manager' && (
+            <>
+              <button className={`sidebar-item ${activeTab === 'expenses' ? 'active' : ''}`} onClick={() => { setActiveTab('expenses'); setSelectedCustomerId(null); }}>
+                <span className="material-symbols-outlined">payments</span>
+                <span>Expense Tracker</span>
+              </button>
+              <button className={`sidebar-item ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}>
+                <span className="material-symbols-outlined">group</span>
+                <span>Customers</span>
+              </button>
+            </>
+          )}
         </nav>
         <div className="sidebar-divider"></div>
         <div style={{ marginTop: 'auto' }}>
@@ -1319,51 +1420,59 @@ function App() {
             </section>
 
             {/* Metrics cards row */}
-            <section className="metrics-row">
-              <div className="metric-card">
-                <div className="metric-header">
-                  <span className="font-label-md text-outline">TOTAL REVENUE</span>
-                  <span className="metric-growth-badge positive">+{metrics.revenue_growth_percentage}%</span>
-                </div>
-                <div className="metric-value text-primary">{formatCurrency(metrics.total_revenue_current_month)}</div>
-                <span style={{ fontSize: '13px', color: 'var(--on-surface-variant)' }}>This Month</span>
-              </div>
+            <section className="metrics-row" style={userProfile?.role === 'customer' ? { gridTemplateColumns: '1fr' } : {}}>
+              {userProfile?.role === 'manager' && (
+                <>
+                  <div className="metric-card">
+                    <div className="metric-header">
+                      <span className="font-label-md text-outline">TOTAL REVENUE</span>
+                      <span className="metric-growth-badge positive">+{metrics.revenue_growth_percentage}%</span>
+                    </div>
+                    <div className="metric-value text-primary">{formatCurrency(metrics.total_revenue_current_month)}</div>
+                    <span style={{ fontSize: '13px', color: 'var(--on-surface-variant)' }}>This Month</span>
+                  </div>
 
-              <div className="metric-card">
-                <div className="metric-header">
-                  <span className="font-label-md text-outline">TOTAL EXPENSES</span>
-                  <span className="metric-growth-badge positive" style={{ backgroundColor: 'var(--outline-variant)', color: 'var(--on-surface)' }}>+4.2%</span>
-                </div>
-                <div className="metric-value">{formatCurrency(metrics.total_expenses_current_month)}</div>
-                <a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('expenses'); }} style={{ fontSize: '13px', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
-                  Breakdown
-                  <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>arrow_forward</span>
-                </a>
-              </div>
+                  <div className="metric-card">
+                    <div className="metric-header">
+                      <span className="font-label-md text-outline">TOTAL EXPENSES</span>
+                      <span className="metric-growth-badge positive" style={{ backgroundColor: 'var(--outline-variant)', color: 'var(--on-surface)' }}>+4.2%</span>
+                    </div>
+                    <div className="metric-value">{formatCurrency(metrics.total_expenses_current_month)}</div>
+                    <a href="#" onClick={(e) => { e.preventDefault(); setActiveTab('expenses'); }} style={{ fontSize: '13px', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
+                      Breakdown
+                      <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>arrow_forward</span>
+                    </a>
+                  </div>
+                </>
+              )}
 
               <div className="metric-card" style={{ border: '1px solid rgba(239,68,68,0.2)', backgroundColor: 'var(--surface-container-low)' }}>
                 <div className="metric-header">
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span className="material-symbols-outlined text-error" style={{ fontSize: '18px' }}>priority_high</span>
-                    <span className="font-label-md text-error">PENDING DUE</span>
+                    <span className="font-label-md text-error">{userProfile?.role === 'customer' ? 'MY OUTSTANDING BALANCE' : 'PENDING DUE'}</span>
                   </div>
                 </div>
                 <div className="metric-value text-error">{formatCurrency(metrics.total_outstanding_receivables)}</div>
-                <span style={{ fontSize: '13px', color: 'var(--on-surface-variant)', fontStyle: 'italic' }}>High Priority</span>
+                <span style={{ fontSize: '13px', color: 'var(--on-surface-variant)', fontStyle: 'italic' }}>
+                  {userProfile?.role === 'customer' ? 'Please complete your pending payments' : 'High Priority'}
+                </span>
               </div>
 
-              <div className="metric-card" style={{ border: '1px solid rgba(16,185,129,0.2)', backgroundColor: 'var(--surface-container-low)' }}>
-                <div className="metric-header">
-                  <span className="font-label-md text-outline" style={{ color: 'green' }}>NET PROFIT</span>
-                  <span className="metric-growth-badge positive" style={{ backgroundColor: 'rgba(16,185,129,0.1)', color: 'green' }}>
-                    {((metrics.total_revenue_current_month - metrics.total_expenses_current_month) / metrics.total_revenue_current_month * 100).toFixed(1)}% Margin
-                  </span>
+              {userProfile?.role === 'manager' && (
+                <div className="metric-card" style={{ border: '1px solid rgba(16,185,129,0.2)', backgroundColor: 'var(--surface-container-low)' }}>
+                  <div className="metric-header">
+                    <span className="font-label-md text-outline" style={{ color: 'green' }}>NET PROFIT</span>
+                    <span className="metric-growth-badge positive" style={{ backgroundColor: 'rgba(16,185,129,0.1)', color: 'green' }}>
+                      {((metrics.total_revenue_current_month - metrics.total_expenses_current_month) / metrics.total_revenue_current_month * 100).toFixed(1)}% Margin
+                    </span>
+                  </div>
+                  <div className="metric-value" style={{ color: 'green' }}>
+                    {formatCurrency(metrics.total_revenue_current_month - metrics.total_expenses_current_month)}
+                  </div>
+                  <span style={{ fontSize: '13px', color: 'var(--on-surface-variant)' }}>This Month</span>
                 </div>
-                <div className="metric-value" style={{ color: 'green' }}>
-                  {formatCurrency(metrics.total_revenue_current_month - metrics.total_expenses_current_month)}
-                </div>
-                <span style={{ fontSize: '13px', color: 'var(--on-surface-variant)' }}>This Month</span>
-              </div>
+              )}
             </section>
 
             {/* Sales Trend Chart */}
@@ -1443,8 +1552,8 @@ function App() {
                   <table style={{ tableLayout: 'fixed' }}>
                     <thead>
                       <tr>
-                        <th style={{ width: '45%' }}>Customer</th>
-                        <th style={{ width: '25%', textAlign: 'center' }}>Status</th>
+                        <th style={{ width: '40%' }}>Customer</th>
+                        <th style={{ width: '30%', textAlign: 'center' }}>Status</th>
                         <th style={{ width: '30%', textAlign: 'right' }}>Amount</th>
                       </tr>
                     </thead>
@@ -1570,7 +1679,7 @@ function App() {
                           <th>Item/Qty</th>
                           <th>Total</th>
                           <th>Status</th>
-                          <th style={{ width: '48px' }}></th>
+                          {userProfile?.role === 'manager' && <th style={{ width: '48px' }}></th>}
                         </tr>
                       </thead>
                       <tbody>
@@ -1589,19 +1698,21 @@ function App() {
                                   {sale.payment_status}
                                 </span>
                               </td>
-                              <td>
-                                <button 
-                                  className="btn btn-ghost" 
-                                  style={{ padding: '4px' }} 
-                                  onClick={() => {
-                                    setActionSale(sale)
-                                    setActionModalOpen(true)
-                                    setShowReceiptPreview(false)
-                                  }}
-                                >
-                                  <span className="material-symbols-outlined">more_vert</span>
-                                </button>
-                              </td>
+                              {userProfile?.role === 'manager' && (
+                                <td>
+                                  <button 
+                                    className="btn btn-ghost" 
+                                    style={{ padding: '4px' }} 
+                                    onClick={() => {
+                                      setActionSale(sale)
+                                      setActionModalOpen(true)
+                                      setShowReceiptPreview(false)
+                                    }}
+                                  >
+                                    <span className="material-symbols-outlined">more_vert</span>
+                                  </button>
+                                </td>
+                              )}
                             </tr>
                           ))
                         ) : (
@@ -1630,13 +1741,15 @@ function App() {
                             justifyContent: 'space-between', 
                             gap: '12px',
                             borderBottom: idx < currentSales.length - 1 ? '1px solid var(--outline-variant)' : 'none',
-                            cursor: 'pointer'
+                            cursor: userProfile?.role === 'manager' ? 'pointer' : 'default'
                           }} 
                           className="hoverable"
                           onClick={() => {
-                            setActionSale(sale)
-                            setActionModalOpen(true)
-                            setShowReceiptPreview(false)
+                            if (userProfile?.role === 'manager') {
+                              setActionSale(sale)
+                              setActionModalOpen(true)
+                              setShowReceiptPreview(false)
+                            }
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -1718,7 +1831,7 @@ function App() {
           </div>
         )}
 
-        {activeTab === 'expenses' && (
+        {activeTab === 'expenses' && userProfile?.role === 'manager' && (
           <div>
             {/* Expenses Explorer Header */}
             <section style={{ marginBottom: '32px' }}>
@@ -1923,7 +2036,7 @@ function App() {
           </div>
         )}
 
-        {activeTab === 'customers' && (
+        {activeTab === 'customers' && userProfile?.role === 'manager' && (
           <div>
             {selectedCustomerId === null ? (
               <div>
@@ -2050,6 +2163,22 @@ function App() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '12px' }}>
+                    {userProfile?.role === 'manager' && (
+                      <button 
+                        className="btn btn-outline" 
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '12px 24px', borderRadius: '12px' }} 
+                        onClick={() => {
+                          setEditCustName(selectedCustomer.name)
+                          setEditCustPhone(selectedCustomer.phone || '')
+                          setEditCustEmail(selectedCustomer.email || '')
+                          setEditCustCustomID(selectedCustomer.custom_id || '')
+                          setEditCustomerModalOpen(true)
+                        }}
+                      >
+                        <span className="material-symbols-outlined">edit</span>
+                        Edit Details
+                      </button>
+                    )}
                     <a className="btn btn-primary" href={`tel:${selectedCustomer.phone}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '12px 24px', borderRadius: '12px' }}>
                       <span className="material-symbols-outlined" style={{ fontVariationSettings: '"FILL" 1' }}>call</span>
                       Call Customer
@@ -2254,25 +2383,27 @@ function App() {
       </main>
 
       {/* Floating Action Button (FAB) */}
-      {activeTab === 'customers' ? (
-        selectedCustomerId === null && (
-          <button 
-            className="fixed bottom-24 right-sm h-14 px-sm bg-primary text-on-primary rounded-full shadow-xl flex items-center gap-xs active:scale-90 duration-200 z-40 transition-all" 
-            style={{
-              position: 'fixed', bottom: '96px', right: '24px', height: '56px', padding: '0 24px', 
-              backgroundColor: 'var(--primary)', color: 'var(--on-primary)', borderRadius: '9999px',
-              boxShadow: 'var(--shadow-high)', display: 'flex', alignItems: 'center', gap: '8px', zIndex: 40, border: 'none', cursor: 'pointer'
-            }}
-            onClick={() => setCustomerModalOpen(true)}
-          >
-            <span className="material-symbols-outlined" style={{ color: 'var(--on-primary)' }}>person_add</span>
-            <span className="font-label-md text-label-md font-bold" style={{ color: 'var(--on-primary)', fontWeight: '700' }}>New Customer</span>
+      {userProfile?.role === 'manager' && (
+        activeTab === 'customers' ? (
+          selectedCustomerId === null && (
+            <button 
+              className="fixed bottom-24 right-sm h-14 px-sm bg-primary text-on-primary rounded-full shadow-xl flex items-center gap-xs active:scale-90 duration-200 z-40 transition-all" 
+              style={{
+                position: 'fixed', bottom: '96px', right: '24px', height: '56px', padding: '0 24px', 
+                backgroundColor: 'var(--primary)', color: 'var(--on-primary)', borderRadius: '9999px',
+                boxShadow: 'var(--shadow-high)', display: 'flex', alignItems: 'center', gap: '8px', zIndex: 40, border: 'none', cursor: 'pointer'
+              }}
+              onClick={() => setCustomerModalOpen(true)}
+            >
+              <span className="material-symbols-outlined" style={{ color: 'var(--on-primary)' }}>person_add</span>
+              <span className="font-label-md text-label-md font-bold" style={{ color: 'var(--on-primary)', fontWeight: '700' }}>New Customer</span>
+            </button>
+          )
+        ) : (
+          <button className="fab" onClick={() => { setQuickAddTab('sale'); setQuickAddOpen(true); }}>
+            <span className="material-symbols-outlined" style={{ fontSize: '28px' }}>add</span>
           </button>
         )
-      ) : (
-        <button className="fab" onClick={() => { setQuickAddTab('sale'); setQuickAddOpen(true); }}>
-          <span className="material-symbols-outlined" style={{ fontSize: '28px' }}>add</span>
-        </button>
       )}
 
       {/* Mobile Bottom Navigation Bar */}
@@ -2283,16 +2414,20 @@ function App() {
         </button>
         <button className={`bottom-nav-item ${activeTab === 'sales' ? 'active' : ''}`} onClick={() => { setActiveTab('sales'); setSelectedCustomerId(null); }}>
           <span className="material-symbols-outlined">receipt_long</span>
-          <p>Sales</p>
+          <p>{userProfile?.role === 'customer' ? 'Purchases' : 'Sales'}</p>
         </button>
-        <button className={`bottom-nav-item ${activeTab === 'expenses' ? 'active' : ''}`} onClick={() => { setActiveTab('expenses'); setSelectedCustomerId(null); }}>
-          <span className="material-symbols-outlined">payments</span>
-          <p>Expenses</p>
-        </button>
-        <button className={`bottom-nav-item ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}>
-          <span className="material-symbols-outlined">group</span>
-          <p>Customers</p>
-        </button>
+        {userProfile?.role === 'manager' && (
+          <>
+            <button className={`bottom-nav-item ${activeTab === 'expenses' ? 'active' : ''}`} onClick={() => { setActiveTab('expenses'); setSelectedCustomerId(null); }}>
+              <span className="material-symbols-outlined">payments</span>
+              <p>Expenses</p>
+            </button>
+            <button className={`bottom-nav-item ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}>
+              <span className="material-symbols-outlined">group</span>
+              <p>Customers</p>
+            </button>
+          </>
+        )}
       </nav>
 
       {/* Quick Add Modal */}
@@ -2660,6 +2795,71 @@ function App() {
               <button className="btn btn-primary" style={{ width: '100%', padding: '14px', marginTop: '4px' }} onClick={handleAddCustomer}>
                 <span className="material-symbols-outlined">person_add</span>
                 Create Customer Account
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Customer Edit Modal */}
+      {editCustomerModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '480px' }}>
+            <header className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className="material-symbols-outlined text-primary">edit</span>
+                <h3 style={{ fontSize: '20px' }}>Edit Customer Details</h3>
+              </div>
+              <button className="modal-close-btn" onClick={() => setEditCustomerModalOpen(false)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </header>
+
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div className="filter-input-group">
+                <label className="font-label-md text-on-surface-variant">Shop/Customer Name *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Alingal Traders"
+                  value={editCustName}
+                  onChange={(e) => setEditCustName(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="filter-input-group">
+                <label className="font-label-md text-on-surface-variant">Custom ID (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. FT-9902"
+                  value={editCustCustomID}
+                  onChange={(e) => setEditCustCustomID(e.target.value)}
+                />
+              </div>
+
+              <div className="filter-input-group">
+                <label className="font-label-md text-on-surface-variant">Phone Number</label>
+                <input
+                  type="text"
+                  placeholder="e.g. +91 94460 88200"
+                  value={editCustPhone}
+                  onChange={(e) => setEditCustPhone(e.target.value)}
+                />
+              </div>
+
+              <div className="filter-input-group">
+                <label className="font-label-md text-on-surface-variant">Email Address (Optional)</label>
+                <input
+                  type="email"
+                  placeholder="e.g. store@email.com"
+                  value={editCustEmail}
+                  onChange={(e) => setEditCustEmail(e.target.value)}
+                />
+              </div>
+
+              <button className="btn btn-primary" style={{ width: '100%', padding: '14px', marginTop: '4px' }} onClick={handleEditCustomer}>
+                <span className="material-symbols-outlined">save</span>
+                Save Changes
               </button>
             </div>
           </div>

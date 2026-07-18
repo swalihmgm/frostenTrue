@@ -6,7 +6,10 @@ from .views import (
     SaleViewSet,
     ExpenseViewSet,
     DashboardOverviewView,
-    QuickAddContextView
+    QuickAddContextView,
+    LoginView,
+    LogoutView,
+    CurrentUserView
 )
 
 # Initialize Default DRF Router
@@ -23,4 +26,9 @@ urlpatterns = [
     # Custom dashboard aggregation and UI helper endpoints
     path('dashboard/overview/', DashboardOverviewView.as_view(), name='dashboard-overview'),
     path('dashboard/quick-add/', QuickAddContextView.as_view(), name='dashboard-quick-add'),
+    
+    # Authentication endpoints
+    path('login/', LoginView.as_view(), name='api-login'),
+    path('logout/', LogoutView.as_view(), name='api-logout'),
+    path('current-user/', CurrentUserView.as_view(), name='api-current-user'),
 ]

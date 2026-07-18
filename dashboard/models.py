@@ -58,6 +58,20 @@ class Customer(models.Model):
     created_at = models.DateTimeField(
         default=timezone.now
     )
+    email = models.EmailField(
+        blank=True, 
+        null=True, 
+        unique=True,
+        help_text="Email address for customer login"
+    )
+    user = models.OneToOneField(
+        'auth.User', 
+        on_delete=models.SET_NULL, 
+        blank=True, 
+        null=True, 
+        related_name="customer",
+        help_text="Associated User account for customer login"
+    )
 
     class Meta:
         verbose_name = "Customer"
@@ -66,6 +80,43 @@ class Customer(models.Model):
 
     def __str__(self):
         return f"{self.custom_id} - {self.name}"
+
+    def save(self, *args, **kwargs):
+        # Generate custom_id if not present
+        if not self.custom_id:
+            import random
+            self.custom_id = f"FT-{random.randint(1000, 9999)}"
+            
+        if self.email:
+            from django.contrib.auth.models import User
+            # Check if we already have a linked user
+            if not self.user:
+                # Search if there is a User with username=email
+                user = User.objects.filter(username=self.email).first()
+                if not user:
+                    user = User.objects.create_user(
+                        username=self.email,
+                        email=self.email,
+                        password=self.name # password is the shop name (name)
+                    )
+                self.user = user
+            else:
+                # User exists, make sure email and username are updated if changed
+                user = self.user
+                if user.username != self.email or user.email != self.email:
+                    user.username = self.email
+                    user.email = self.email
+                    user.save()
+        else:
+            # Email is blank. If there was a linked user, clean it up
+            if self.user:
+                user = self.user
+                self.user = None
+                super().save(*args, **kwargs) # Save Customer first to remove foreign key constraint
+                user.delete()
+                return
+
+        super().save(*args, **kwargs)
 
     @property
     def total_outstanding_balance(self):

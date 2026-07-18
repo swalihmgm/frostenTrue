@@ -22,6 +22,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             'custom_id', 
             'name', 
             'phone', 
+            'email',
             'customer_type', 
             'customer_type_name', 
             'total_outstanding_balance', 

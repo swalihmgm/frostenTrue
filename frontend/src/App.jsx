@@ -444,8 +444,19 @@ function App() {
   ])
 
 
+  // Budget edit state
+  const [isEditingBudget, setIsEditingBudget] = useState(false)
+  const [tempBudget, setTempBudget] = useState('')
+
   // Central Application Data States
-  const [metrics, setMetrics] = useState(MOCK_METRICS)
+  const [metrics, setMetrics] = useState(() => {
+    const savedBudget = localStorage.getItem('budgeted_expenses')
+    const budgetVal = savedBudget ? parseFloat(savedBudget) : 45000.00
+    return {
+      ...MOCK_METRICS,
+      budgeted_expenses: budgetVal
+    }
+  })
   const [trend30Days, setTrend30Days] = useState(MOCK_TREND)
   const [trendRange, setTrendRange] = useState('Last 6 Months')
 
@@ -534,6 +545,113 @@ function App() {
   const [expenseSearchQuery, setExpenseSearchQuery] = useState('')
   const [expenseStatusFilter, setExpenseStatusFilter] = useState('All') // All | Paid | Pending
   
+  // Custom Alert Modal State
+  const [customAlert, setCustomAlert] = useState(null)
+  const showAlert = (message, title = 'Notice', type = 'info') => {
+    setCustomAlert({ message, title, type })
+  }
+
+  // Shadow native alert with custom themed dialog
+  const alert = (message) => {
+    let type = 'info'
+    let title = 'System Notification'
+    let friendlyMessage = String(message)
+    const lower = String(message).toLowerCase()
+    
+    // Custom friendly mappings
+    if (lower.includes('invalid credentials') || lower.includes('invalid username or password')) {
+      type = 'error'
+      title = 'Sign In Failed'
+      friendlyMessage = 'The username or password you entered is incorrect. Please check your credentials and try again.'
+    } else if (lower.includes('enter both username and password')) {
+      type = 'error'
+      title = 'Credentials Required'
+      friendlyMessage = 'Both username and password are required to access the console. Please fill in both fields.'
+    } else if (lower.includes('network error trying to connect to server') || lower.includes('network error trying to connect')) {
+      type = 'error'
+      title = 'Connection Issues'
+      friendlyMessage = 'We are unable to reach the Frozen True servers. Please check your internet connection and try again.'
+    } else if (lower.includes('fill in all required fields')) {
+      type = 'error'
+      title = 'Missing Fields'
+      friendlyMessage = 'Some required fields are empty. Please check the form and fill in all mandatory details.'
+    } else if (lower.includes('vendor / supplier name') || lower.includes('vendor or supplier name')) {
+      type = 'error'
+      title = 'Vendor Required'
+      friendlyMessage = 'Please enter the Vendor/Supplier name to record this pending invoice.'
+    } else if (lower.includes('enter a shop name')) {
+      type = 'error'
+      title = 'Shop Name Required'
+      friendlyMessage = 'A customer shop name is required. Please enter the name of the shop.'
+    } else if (lower.includes('failed to create customer')) {
+      type = 'error'
+      title = 'Creation Failed'
+      friendlyMessage = 'We could not add the customer. Please verify that the Custom ID is unique and try again.'
+    } else if (lower.includes('failed to update customer')) {
+      type = 'error'
+      title = 'Update Failed'
+      friendlyMessage = 'We could not update the customer details. Please verify the information and try again.'
+    } else if (lower.includes('no sales transactions found')) {
+      type = 'info'
+      title = 'No History Found'
+      friendlyMessage = message // keep the dynamic customer details in the message
+    } else if (lower.includes('pdf library is not loaded')) {
+      type = 'info'
+      title = 'Print Utility Fallback'
+      friendlyMessage = 'The PDF generation library is not fully loaded yet. Falling back to the browser\'s native print tool.'
+    } else if (lower.includes('reset password')) {
+      type = 'info'
+      title = 'Reset Password'
+      friendlyMessage = 'Password resets must be processed by your system administrator. Please reach out to your administrator to change your password.'
+    } else if (lower.includes('admin@frozentrue.com')) {
+      type = 'info'
+      title = 'Access Request'
+      friendlyMessage = 'To register on the Frozen True network, please contact the support team at admin@frozentrue.com.'
+    } else if (lower.includes('valid budget amount')) {
+      type = 'error'
+      title = 'Invalid Budget'
+      friendlyMessage = 'Please enter a valid, positive number to set your monthly expense budget.'
+    } else if (lower.includes('error') || lower.includes('failed') || lower.includes('unable')) {
+      type = 'error'
+      title = 'Action Failed'
+    } else if (lower.includes('required') || lower.includes('please enter')) {
+      type = 'error'
+      title = 'Input Required'
+    } else if (lower.includes('success') || lower.includes('completed') || lower.includes('saved')) {
+      type = 'success'
+      title = 'Success'
+    }
+
+    showAlert(friendlyMessage, title, type)
+  }
+
+  // Profile dropdown & header search states
+  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false)
+  const [isHeaderSearchOpen, setIsHeaderSearchOpen] = useState(false)
+  const profileDropdownRef = useRef(null)
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target)) {
+        setIsProfileDropdownOpen(false)
+      }
+    }
+    if (isProfileDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isProfileDropdownOpen])
+
+  // Load more expenses states
+  const [expensesVisibleCount, setExpensesVisibleCount] = useState(5)
+  const [isLoadingExpenses, setIsLoadingExpenses] = useState(false)
+
+  useEffect(() => {
+    setExpensesVisibleCount(5)
+  }, [expenseSearchQuery, expenseStatusFilter])
+  
   // Drilldown statements
   const [stmtStartDate, setStmtStartDate] = useState('')
   const [stmtEndDate, setStmtEndDate] = useState('')
@@ -605,7 +723,20 @@ function App() {
       const response = await fetch('/api/dashboard/overview/')
       if (response.ok) {
         const data = await response.json()
-        setMetrics(data.metrics)
+        const savedBudget = localStorage.getItem('budgeted_expenses')
+        const budgeted_expenses = savedBudget ? parseFloat(savedBudget) : (data.metrics.budgeted_expenses || 45000.00)
+        
+        const expenses_growth_percentage = data.metrics.expenses_growth_percentage !== undefined 
+          ? data.metrics.expenses_growth_percentage 
+          : (data.metrics.total_expenses_previous_month > 0 
+              ? Math.round(((data.metrics.total_expenses_current_month - data.metrics.total_expenses_previous_month) / data.metrics.total_expenses_previous_month) * 100 * 10) / 10
+              : 4.2)
+
+        setMetrics({
+          ...data.metrics,
+          budgeted_expenses,
+          expenses_growth_percentage
+        })
         setTrend30Days(data.trend_30_days)
         setRecentActivity(data.recent_activity)
       }
@@ -902,6 +1033,15 @@ function App() {
     setExpenseStatus('Paid')
     setExpenseDate(new Date().toISOString().split('T')[0])
     setQuickAddOpen(false)
+  }
+
+  // Handle Loading More Expenses
+  const handleLoadMoreExpenses = () => {
+    setIsLoadingExpenses(true)
+    setTimeout(() => {
+      setExpensesVisibleCount(prev => prev + 5)
+      setIsLoadingExpenses(false)
+    }, 600)
   }
 
   // Helper: Simulate pending payment locally
@@ -1354,6 +1494,55 @@ function App() {
             <p style={{ fontSize: '11px', color: 'var(--outline-variant)', fontFamily: 'var(--font-mono)' }}>© 2026 Frozen True. All rights reserved.</p>
           </footer>
         </main>
+
+        {customAlert && (
+          <div className="modal-overlay" style={{ zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div className="glass-card" style={{
+              maxWidth: '400px',
+              width: '90%',
+              padding: '24px',
+              borderRadius: '16px',
+              border: '1px solid rgba(255, 255, 255, 0.4)',
+              boxShadow: 'var(--shadow-modal)',
+              textAlign: 'center',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '16px',
+              backgroundColor: 'rgba(255, 255, 255, 0.95)',
+              backdropFilter: 'blur(16px)'
+            }}>
+              <div style={{
+                width: '56px',
+                height: '56px',
+                borderRadius: '50%',
+                backgroundColor: customAlert.type === 'error' ? 'var(--error-container)' : 'var(--primary-fixed)',
+                color: customAlert.type === 'error' ? 'var(--error)' : 'var(--primary)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: 'var(--shadow-low)'
+              }}>
+                <span className="material-symbols-outlined" style={{ fontSize: '32px' }}>
+                  {customAlert.type === 'error' ? 'report_problem' : customAlert.type === 'success' ? 'check_circle' : 'info'}
+                </span>
+              </div>
+              <h3 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--on-surface)' }}>
+                {customAlert.title}
+              </h3>
+              <p className="text-on-surface-variant" style={{ fontSize: '14px', lineHeight: '1.5' }}>
+                {customAlert.message}
+              </p>
+              <button 
+                className="btn btn-primary" 
+                style={{ width: '100%', padding: '10px', marginTop: '8px' }} 
+                onClick={() => setCustomAlert(null)}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -1367,11 +1556,171 @@ function App() {
           <h1>Frozen True</h1>
         </div>
         <div className="top-bar-actions">
-          <button className="btn btn-ghost" style={{ padding: '8px', borderRadius: '50%' }} onClick={() => alert('Search filters active.')}>
-            <span className="material-symbols-outlined">search</span>
-          </button>
-          <div className="header-profile-avatar" title="Manager Profile" onClick={handleLogout}>
-            <img alt="User Profile" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC0Tk6-Mx4S8T_Omne81JWLkq9rp5PI4g7YXGrs-b6kUFsd23hmndgwD9KFYGd6-o72M3bLv7Ww43zJDgFu5aOtt5jSqHdkDBTJt3Z0Ej4wpc9DCVQyxEleJsD6ZVxZLu1E6OCuWl5Ttt8rrsPCmj1-ATcPg25FUAaBAQ9bLRugVciM9NlH__YvtkAUxRoXH_Oa8RIecE_DJ9Rk-6j88puomD3sbVffqulUPo1QMvRBFiDaQnND6_zd" />
+          {isHeaderSearchOpen ? (
+            <div style={{ display: 'flex', alignItems: 'center', position: 'relative' }}>
+              <input 
+                type="text" 
+                placeholder={
+                  activeTab === 'sales' ? 'Search sales...' :
+                  activeTab === 'expenses' ? 'Search expenses...' :
+                  activeTab === 'customers' ? 'Search customers...' :
+                  'Search...'
+                }
+                value={
+                  activeTab === 'sales' ? salesSearchQuery : 
+                  activeTab === 'expenses' ? expenseSearchQuery : 
+                  searchQuery
+                }
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (activeTab === 'sales') setSalesSearchQuery(val);
+                  else if (activeTab === 'expenses') setExpenseSearchQuery(val);
+                  else setSearchQuery(val);
+                }}
+                style={{ 
+                  width: '180px', 
+                  padding: '6px 32px 6px 12px', 
+                  fontSize: '13px', 
+                  borderRadius: '20px', 
+                  border: '1px solid var(--outline-variant)', 
+                  height: '34px',
+                  backgroundColor: 'var(--surface-container-low)'
+                }}
+                autoFocus
+              />
+              <button 
+                style={{ background: 'transparent', border: 'none', position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: 'var(--outline)', display: 'flex', alignItems: 'center' }}
+                onClick={() => {
+                  if (activeTab === 'sales') setSalesSearchQuery('');
+                  else if (activeTab === 'expenses') setExpenseSearchQuery('');
+                  else setSearchQuery('');
+                  setIsHeaderSearchOpen(false);
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>close</span>
+              </button>
+            </div>
+          ) : (
+            <button className="btn btn-ghost" style={{ padding: '8px', borderRadius: '50%' }} onClick={() => setIsHeaderSearchOpen(true)}>
+              <span className="material-symbols-outlined">search</span>
+            </button>
+          )}
+
+          <div ref={profileDropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
+            <div 
+              className="header-profile-avatar" 
+              title="User Profile Menu" 
+              onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
+            >
+              <img alt="User Profile" src="/profile_avatar.png" />
+            </div>
+
+            {isProfileDropdownOpen && (
+              <div className="glass-card" style={{
+                position: 'absolute',
+                top: '42px',
+                right: '0px',
+                width: '220px',
+                zIndex: 1000,
+                padding: '8px',
+                borderRadius: '12px',
+                border: '1px solid rgba(255, 255, 255, 0.4)',
+                boxShadow: 'var(--shadow-high)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+                backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                backdropFilter: 'blur(16px)',
+                textAlign: 'left'
+              }}>
+                {/* User Info Header */}
+                <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--outline-variant)', marginBottom: '4px' }}>
+                  <div style={{ fontWeight: '700', fontSize: '14px', color: 'var(--on-surface)' }}>
+                    {userProfile?.username || 'Admin'}
+                  </div>
+                  <div className="font-label-md text-outline" style={{ fontSize: '10px', marginTop: '2px', textTransform: 'uppercase' }}>
+                    {userProfile?.role || 'Manager'}
+                  </div>
+                </div>
+
+                {/* Profile Settings Option */}
+                <button 
+                  className="sidebar-item" 
+                  style={{ 
+                    padding: '8px 12px', 
+                    borderRadius: '8px', 
+                    fontSize: '13px', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    width: '100%',
+                    color: 'var(--on-surface-variant)'
+                  }}
+                  onClick={() => {
+                    setIsProfileDropdownOpen(false);
+                    alert('Profile settings console is under development.');
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>manage_accounts</span>
+                  Profile Settings
+                </button>
+
+                {/* System Settings Option */}
+                <button 
+                  className="sidebar-item" 
+                  style={{ 
+                    padding: '8px 12px', 
+                    borderRadius: '8px', 
+                    fontSize: '13px', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    width: '100%',
+                    color: 'var(--on-surface-variant)'
+                  }}
+                  onClick={() => {
+                    setIsProfileDropdownOpen(false);
+                    alert('Frozen True Settings Console. Version 2.0.4-Fidelity.');
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>settings</span>
+                  System Settings
+                </button>
+
+                <div style={{ height: '1px', backgroundColor: 'var(--outline-variant)', margin: '4px 0' }}></div>
+
+                {/* Logout Option */}
+                <button 
+                  className="sidebar-item" 
+                  style={{ 
+                    padding: '8px 12px', 
+                    borderRadius: '8px', 
+                    fontSize: '13px', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    width: '100%',
+                    color: 'var(--error)'
+                  }}
+                  onClick={() => {
+                    setIsProfileDropdownOpen(false);
+                    handleLogout();
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>logout</span>
+                  Log Out
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -1842,7 +2191,7 @@ function App() {
             {/* Expenses Summary Bento */}
             <section className="filters-grid" style={{ marginBottom: '32px' }}>
               {/* Total Expenses Card */}
-              <div className="glass-card" style={{ gridColumn: 'span 2', display: 'flex', flexDirection: 'column', justifycontent: 'space-between', justifyContent: 'space-between', position: 'relative', overflow: 'hidden' }}>
+              <div className="glass-card expenses-total-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', position: 'relative', overflow: 'hidden' }}>
                 <div style={{ position: 'absolute', top: '-48px', right: '-48px', width: '192px', height: '192px', borderRadius: '50%', backgroundColor: 'rgba(0,163,255,0.05)', filter: 'blur(40px)' }}></div>
                 <div>
                   <span className="font-label-md text-on-surface-variant uppercase">TOTAL EXPENSES (THIS MONTH)</span>
@@ -1853,14 +2202,76 @@ function App() {
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '24px', marginTop: '24px', borderTop: '1px solid var(--outline-variant)', paddingTop: '16px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span className="font-label-md text-outline">Budgeted</span>
-                    <span style={{ fontSize: '16px', fontWeight: '600' }}>{formatCurrency(metrics.budgeted_expenses)}</span>
+                <div style={{ display: 'flex', gap: '20px', marginTop: '24px', borderTop: '1px solid var(--outline-variant)', paddingTop: '16px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', minWidth: '100px' }}>
+                    <span className="font-label-md text-outline" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      Budgeted
+                      {!isEditingBudget && (
+                        <button 
+                          onClick={() => {
+                            setTempBudget(metrics.budgeted_expenses || 45000);
+                            setIsEditingBudget(true);
+                          }}
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', padding: '2px', color: 'var(--primary)' }}
+                          title="Edit Budget"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>edit</span>
+                        </button>
+                      )}
+                    </span>
+                    {isEditingBudget ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
+                        <input
+                          type="number"
+                          value={tempBudget}
+                          onChange={(e) => setTempBudget(e.target.value)}
+                          style={{ width: '80px', padding: '1px 4px', fontSize: '13px', borderRadius: '4px', border: '1px solid var(--primary)', height: '24px' }}
+                          autoFocus
+                        />
+                        <button 
+                          onClick={() => {
+                            const newBudget = parseFloat(tempBudget);
+                            if (!isNaN(newBudget) && newBudget >= 0) {
+                              setMetrics(prev => ({
+                                ...prev,
+                                budgeted_expenses: newBudget
+                              }));
+                              localStorage.setItem('budgeted_expenses', String(newBudget));
+                              setIsEditingBudget(false);
+                            } else {
+                              alert('Please enter a valid budget amount.');
+                            }
+                          }}
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'green', padding: '1px' }}
+                          title="Save"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>check</span>
+                        </button>
+                        <button 
+                          onClick={() => setIsEditingBudget(false)}
+                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'var(--error)', padding: '1px' }}
+                          title="Cancel"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>close</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: '16px', fontWeight: '600', marginTop: '4px' }}>
+                        {formatCurrency(metrics.budgeted_expenses || 45000)}
+                      </span>
+                    )}
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--outline-variant)', paddingLeft: '24px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--outline-variant)', paddingLeft: '20px', minWidth: '100px' }}>
                     <span className="font-label-md text-outline">Remaining</span>
-                    <span className="text-secondary" style={{ fontSize: '16px', fontWeight: '600' }}>{formatCurrency(metrics.budgeted_expenses - metrics.total_expenses_current_month)}</span>
+                    <span className="text-secondary" style={{ fontSize: '16px', fontWeight: '600', marginTop: '4px' }}>
+                      {formatCurrency((metrics.budgeted_expenses || 45000) - metrics.total_expenses_current_month)}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--outline-variant)', paddingLeft: '20px', minWidth: '100px' }}>
+                    <span className="font-label-md text-outline">Total (All Time)</span>
+                    <span style={{ fontSize: '16px', fontWeight: '600', color: 'var(--primary)', marginTop: '4px' }}>
+                      {formatCurrency(expenses.reduce((acc, e) => acc + e.amount, 0))}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1977,7 +2388,7 @@ function App() {
                     </thead>
                     <tbody>
                       {filteredExpenses.length > 0 ? (
-                        filteredExpenses.map((exp) => (
+                        filteredExpenses.slice(0, expensesVisibleCount).map((exp) => (
                           <tr key={`${exp.status}-${exp.id}`} className="hoverable">
                             <td>{new Date(exp.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
                             <td>
@@ -2025,12 +2436,28 @@ function App() {
                   </table>
                 </div>
 
-                <div style={{ padding: '16px', display: 'flex', justifyContent: 'center', borderTop: '1px solid var(--outline-variant)' }}>
-                  <button className="btn btn-ghost font-label-md uppercase" style={{ fontSize: '11px' }} onClick={() => alert('Loading historic expenditures...')}>
-                    Load More Transactions
-                    <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>keyboard_arrow_down</span>
-                  </button>
-                </div>
+                {filteredExpenses.length > expensesVisibleCount && (
+                  <div style={{ padding: '16px', display: 'flex', justifyContent: 'center', borderTop: '1px solid var(--outline-variant)' }}>
+                    <button 
+                      className="btn btn-ghost font-label-md uppercase" 
+                      style={{ fontSize: '11px', display: 'flex', alignItems: 'center', gap: '8px' }} 
+                      onClick={handleLoadMoreExpenses}
+                      disabled={isLoadingExpenses}
+                    >
+                      {isLoadingExpenses ? (
+                        <>
+                          <span className="material-symbols-outlined animate-spin" style={{ fontSize: '14px', animation: 'spin 1s linear infinite' }}>progress_activity</span>
+                          Loading...
+                        </>
+                      ) : (
+                        <>
+                          Load More Transactions
+                          <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>keyboard_arrow_down</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
           </div>
@@ -2179,10 +2606,6 @@ function App() {
                         Edit Details
                       </button>
                     )}
-                    <a className="btn btn-primary" href={`tel:${selectedCustomer.phone}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '12px 24px', borderRadius: '12px' }}>
-                      <span className="material-symbols-outlined" style={{ fontVariationSettings: '"FILL" 1' }}>call</span>
-                      Call Customer
-                    </a>
                     <button className="btn btn-outline" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '12px 24px', borderRadius: '12px' }} onClick={handleGenerateInvoice}>
                       <span className="material-symbols-outlined">receipt_long</span>
                       Print Statement
@@ -2241,6 +2664,44 @@ function App() {
                       {selectedCustomer.last_activity_desc}
                     </span>
                   </div>
+
+                  {/* Call Customer Card */}
+                  <a 
+                    className="metric-card hoverable" 
+                    href={`tel:${selectedCustomer.phone}`} 
+                    style={{ 
+                      textDecoration: 'none', 
+                      cursor: 'pointer', 
+                      transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)', 
+                      display: 'flex', 
+                      flexDirection: 'column', 
+                      justifyContent: 'center', 
+                      alignItems: 'center',
+                      backgroundColor: 'var(--primary)',
+                      color: 'var(--on-primary)',
+                      border: 'none',
+                      gap: '12px',
+                      padding: '24px',
+                      boxShadow: 'var(--shadow-low)'
+                    }}
+                  >
+                    <div style={{ 
+                      width: '56px', 
+                      height: '56px', 
+                      borderRadius: '50%', 
+                      backgroundColor: 'rgba(255,255,255,0.2)', 
+                      color: '#ffffff', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                    }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: '28px', fontVariationSettings: '"FILL" 1' }}>call</span>
+                    </div>
+                    <span style={{ fontSize: '16px', fontWeight: '700', letterSpacing: '0.06em', textTransform: 'uppercase', color: '#ffffff' }}>
+                      Call Customer
+                    </span>
+                  </a>
                 </section>
 
                 {/* Generate Statement inputs */}
@@ -3326,6 +3787,55 @@ function App() {
                 Download PDF
               </button>
             </footer>
+          </div>
+        </div>
+      )}
+
+      {customAlert && (
+        <div className="modal-overlay" style={{ zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div className="glass-card" style={{
+            maxWidth: '400px',
+            width: '90%',
+            padding: '24px',
+            borderRadius: '16px',
+            border: '1px solid rgba(255, 255, 255, 0.4)',
+            boxShadow: 'var(--shadow-modal)',
+            textAlign: 'center',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '16px',
+            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+            backdropFilter: 'blur(16px)'
+          }}>
+            <div style={{
+              width: '56px',
+              height: '56px',
+              borderRadius: '50%',
+              backgroundColor: customAlert.type === 'error' ? 'var(--error-container)' : 'var(--primary-fixed)',
+              color: customAlert.type === 'error' ? 'var(--error)' : 'var(--primary)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: 'var(--shadow-low)'
+            }}>
+              <span className="material-symbols-outlined" style={{ fontSize: '32px' }}>
+                {customAlert.type === 'error' ? 'report_problem' : customAlert.type === 'success' ? 'check_circle' : 'info'}
+              </span>
+            </div>
+            <h3 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--on-surface)' }}>
+              {customAlert.title}
+            </h3>
+            <p className="text-on-surface-variant" style={{ fontSize: '14px', lineHeight: '1.5' }}>
+              {customAlert.message}
+            </p>
+            <button 
+              className="btn btn-primary" 
+              style={{ width: '100%', padding: '10px', marginTop: '8px' }} 
+              onClick={() => setCustomAlert(null)}
+            >
+              OK
+            </button>
           </div>
         </div>
       )}

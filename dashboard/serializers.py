@@ -14,6 +14,8 @@ class CustomerSerializer(serializers.ModelSerializer):
         decimal_places=2, 
         read_only=True
     )
+    last_activity = serializers.SerializerMethodField()
+    last_activity_desc = serializers.SerializerMethodField()
 
     class Meta:
         model = Customer
@@ -26,8 +28,22 @@ class CustomerSerializer(serializers.ModelSerializer):
             'customer_type', 
             'customer_type_name', 
             'total_outstanding_balance', 
+            'last_activity',
+            'last_activity_desc',
             'created_at'
         ]
+
+    def get_last_activity(self, obj):
+        latest_sale = obj.sales.order_by('-date', '-created_at').first()
+        if latest_sale:
+            return latest_sale.date.strftime('%b %d, %Y')
+        return obj.created_at.strftime('%b %d, %Y')
+
+    def get_last_activity_desc(self, obj):
+        latest_sale = obj.sales.order_by('-date', '-created_at').first()
+        if latest_sale:
+            return f"Delivery: {int(latest_sale.quantity)} {latest_sale.unit_type} ({latest_sale.payment_status})"
+        return "Account created"
 
 
 class SaleSerializer(serializers.ModelSerializer):

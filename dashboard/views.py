@@ -310,6 +310,11 @@ class DashboardOverviewView(APIView):
         recent_sales = Sale.objects.all().order_by('-date', '-created_at')[:5]
         recent_sales_serialized = SaleSerializer(recent_sales, many=True).data
 
+        # Calculate Expense Growth Percentage
+        expenses_growth_percentage = 0.00
+        if prev_expenses > 0:
+            expenses_growth_percentage = float(((curr_expenses - prev_expenses) / prev_expenses) * 100)
+
         # 8. Return Aggregated Payload
         payload = {
             'metrics': {
@@ -318,6 +323,8 @@ class DashboardOverviewView(APIView):
                 'revenue_growth_percentage': round(growth_percentage, 1),
                 'total_expenses_current_month': float(curr_expenses),
                 'total_expenses_previous_month': float(prev_expenses),
+                'expenses_growth_percentage': round(expenses_growth_percentage, 1),
+                'budgeted_expenses': 45000.00,
                 'total_outstanding_receivables': float(total_outstanding),
                 'active_due_customers_count': active_due_customers_count
             },

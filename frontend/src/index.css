@@ -548,7 +548,7 @@ h1, h2, h3, h4, h5, h6 {
 /* Bento Style Filters Grid */
 .filters-grid {
   display: grid;
-  grid-template-cols: 1fr;
+  grid-template-columns: 1fr;
   gap: var(--space-sm);
   margin-bottom: var(--space-lg);
 }
@@ -1149,7 +1149,7 @@ tr.hoverable:nth-child(even):hover {
 /* Radio buttons styled like cards for expense categories */
 .expense-categories-grid {
   display: grid;
-  grid-template-cols: repeat(2, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: var(--space-xs);
 }
 
@@ -1223,7 +1223,7 @@ tr.hoverable:nth-child(even):hover {
     padding-left: 0;
     padding-right: 0;
     display: grid;
-    grid-template-cols: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
   }
   
   .metric-card {
@@ -1231,11 +1231,11 @@ tr.hoverable:nth-child(even):hover {
   }
   
   .filters-grid {
-    grid-template-cols: 1.5fr 2fr 1fr;
+    grid-template-columns: 1.5fr 2fr 1fr;
   }
   
   .expense-categories-grid {
-    grid-template-cols: repeat(4, 1fr);
+    grid-template-columns: repeat(4, 1fr);
   }
 }
 
@@ -1356,6 +1356,17 @@ tr.hoverable:nth-child(even):hover {
   }
   .mobile-only {
     display: none !important;
+  }
+}
+
+/* Responsive grid item for total expenses card */
+.expenses-total-card {
+  grid-column: span 1;
+}
+
+@media (min-width: 768px) {
+  .expenses-total-card {
+    grid-column: span 2;
   }
 }
 

@@ -3,7 +3,36 @@ from decimal import Decimal
 from django.utils import timezone
 from django.db.models import Sum, F
 
-class CustomerType(models.Model):
+class SoftDeleteManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_deleted=False)
+
+
+class SoftDeleteModel(models.Model):
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(blank=True, null=True)
+
+    objects = SoftDeleteManager()
+    all_objects = models.Manager()
+
+    class Meta:
+        abstract = True
+
+    def delete(self, *args, **kwargs):
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.save()
+
+    def hard_delete(self, *args, **kwargs):
+        super().delete(*args, **kwargs)
+
+    def restore(self):
+        self.is_deleted = False
+        self.deleted_at = None
+        self.save()
+
+
+class CustomerType(SoftDeleteModel):
     """
     Represents classifications of customers such as Shops, Events, or Distributors.
     This helps in segmenting analytics and styling the dashboard visually.
@@ -28,7 +57,7 @@ class CustomerType(models.Model):
         return self.name
 
 
-class Customer(models.Model):
+class Customer(SoftDeleteModel):
     """
     Represents a client who purchases ice blocks/bags.
     Tracks client-specific metadata and outstanding receivables.
@@ -118,6 +147,10 @@ class Customer(models.Model):
 
         super().save(*args, **kwargs)
 
+    def delete(self, *args, **kwargs):
+        super().delete(*args, **kwargs)
+        self.sales.all().delete()
+
     @property
     def total_outstanding_balance(self):
         """
@@ -135,7 +168,7 @@ class Customer(models.Model):
         return Decimal(total).quantize(Decimal('0.01')) if total is not None else Decimal('0.00')
 
 
-class Sale(models.Model):
+class Sale(SoftDeleteModel):
     """
     Tracks transaction records of ice bags or blocks sold to a specific Customer.
     Used for revenue analysis and customer balance tracking.
@@ -202,7 +235,7 @@ class Sale(models.Model):
         return total.quantize(Decimal('0.01'))
 
 
-class Expense(models.Model):
+class Expense(SoftDeleteModel):
     """
     Tracks company expenditures to calculate operational net margins.
     Categorized for quick breakdowns on the dashboard UI.

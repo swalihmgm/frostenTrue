@@ -377,6 +377,10 @@ const InlineUnitSelect = ({ value, onChange }) => {
   )
 }
 
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? ''
+  : 'https://frozen-backend-wze5.onrender.com'
+
 function App() {
   const [view, setView] = useState('splash') // splash | login | dashboard
   const [splashProgress, setSplashProgress] = useState(0)
@@ -665,7 +669,7 @@ function App() {
             clearInterval(interval)
             const checkSession = async () => {
               try {
-                const response = await fetch('/api/current-user/')
+                const response = await fetch(`${API_BASE_URL}/api/current-user/`)
                 if (response.ok) {
                   const data = await response.json()
                   setUserProfile(data)
@@ -720,7 +724,7 @@ function App() {
   // API Call: Fetch Dashboard Overview
   const fetchDashboardOverview = async () => {
     try {
-      const response = await fetch('/api/dashboard/overview/')
+      const response = await fetch(`${API_BASE_URL}/api/dashboard/overview/`)
       if (response.ok) {
         const data = await response.json()
         const savedBudget = localStorage.getItem('budgeted_expenses')
@@ -748,7 +752,7 @@ function App() {
   // API Call: Fetch Customers
   const fetchCustomers = async () => {
     try {
-      const response = await fetch('/api/customers/')
+      const response = await fetch(`${API_BASE_URL}/api/customers/`)
       if (response.ok) {
         const data = await response.json()
         setCustomers(data)
@@ -761,7 +765,7 @@ function App() {
   // API Call: Fetch Sales
   const fetchSales = async () => {
     try {
-      const response = await fetch('/api/sales/')
+      const response = await fetch(`${API_BASE_URL}/api/sales/`)
       if (response.ok) {
         const data = await response.json()
         setSales(data)
@@ -774,7 +778,7 @@ function App() {
   // API Call: Fetch Expenses
   const fetchExpenses = async () => {
     try {
-      const response = await fetch('/api/expenses/')
+      const response = await fetch(`${API_BASE_URL}/api/expenses/`)
       if (response.ok) {
         const data = await response.json()
         setExpenses(data)
@@ -793,7 +797,7 @@ function App() {
     }
     setAuthLoading(true)
     try {
-      const response = await fetch('/api/login/', {
+      const response = await fetch(`${API_BASE_URL}/api/login/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: username.trim(), password: password.trim() })
@@ -820,7 +824,7 @@ function App() {
   // Handle Log Out
   const handleLogout = async () => {
     try {
-      await fetch('/api/logout/', { method: 'POST' })
+      await fetch(`${API_BASE_URL}/api/logout/`, { method: 'POST' })
     } catch (e) {
       console.warn('Logout request failed:', e)
     }
@@ -850,7 +854,7 @@ function App() {
     }
 
     try {
-      const response = await fetch('/api/sales/', {
+      const response = await fetch(`${API_BASE_URL}/api/sales/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -1011,7 +1015,7 @@ function App() {
       simulateNewPendingPayment(payload)
     } else {
       try {
-        const response = await fetch('/api/expenses/', {
+        const response = await fetch(`${API_BASE_URL}/api/expenses/`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -1099,7 +1103,7 @@ function App() {
     }
 
     try {
-      const response = await fetch('/api/customers/', {
+      const response = await fetch(`${API_BASE_URL}/api/customers/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -1141,7 +1145,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`/api/customers/${selectedCustomerId}/`, {
+      const response = await fetch(`${API_BASE_URL}/api/customers/${selectedCustomerId}/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)

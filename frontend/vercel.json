@@ -2,15 +2,15 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://your-django-backend-url.onrender.com/api/:path*"
+      "destination": "https://frozen-backend-wze5.onrender.com/api/:path*"
     },
     {
       "source": "/admin/:path*",
-      "destination": "https://your-django-backend-url.onrender.com/admin/:path*"
+      "destination": "https://frozen-backend-wze5.onrender.com/admin/:path*"
     },
     {
       "source": "/static/admin/:path*",
-      "destination": "https://your-django-backend-url.onrender.com/static/admin/:path*"
+      "destination": "https://frozen-backend-wze5.onrender.com/static/admin/:path*"
     }
   ]
 }
